@@ -1,0 +1,290 @@
+_________________________________________
+
+SCRIPT DE SISTEMA OPERATIVO
+_________________________________________
+
+FOR /F %%i IN ('docker ps    ^| grep contenedor_php') DO SET _cont_ejecucion=%%i
+FOR /F %%i IN ('docker ps -a ^| grep contenedor_php') DO SET _cont_pausa=%%i
+
+if  "%_cont_pausa%"  NEQ ""  goto  :reinicio
+       echo "->  No hay contenedor en ejecución :( "
+       docker  run  -dit  -p 80:80  --name  contenedor_php  php:7.2-apache
+       echo "->  Contenedor php, OK   :) "
+
+:reinicio
+
+       if  "%_cont_ejecucion%"  NEQ ""  goto  :creainfo
+             echo "->  Reiniciando contenedor  "
+             docker start contenedor_php
+             echo "->  Contenedor php, OK   :) "
+
+:creainfo
+
+docker exec -it contenedor_php bash -c "cd  /var/www/html"
+docker exec -it contenedor_php bash -c "echo '<?php phpinfo(); ?>' > info.php"
+
+echo "->  Contenedor listo..... http://localhost/info.php    "
+_________________________________________
+
+SCRIPT DE BASE DE DATOS test_db.sql
+_________________________________________
+
+-- phpMyAdmin SQL Dump
+-- version 4.7.8
+-- https://www.phpmyadmin.net/
+--
+-- Servidor: db
+-- Tiempo de generacion: 03-11-2018 a las 04:15:26
+-- Version del servidor: 5.7.23
+-- Version de PHP: 7.2.2
+
+SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
+SET AUTOCOMMIT = 0;
+START TRANSACTION;
+SET time_zone = "+00:00";
+
+--
+-- Base de datos: `test`
+--
+CREATE DATABASE IF NOT EXISTS `test` DEFAULT CHARACTER SET latin1 COLLATE latin1_swedish_ci;
+USE `test`;
+
+--
+-- Estructura de tabla para la tabla `articulo`
+--
+CREATE TABLE `articulo` (
+  `id` int(11) NOT NULL,
+  `cantidad` int(11) NOT NULL,
+  `descripcion` varchar(20) NOT NULL,
+  `precio` decimal(12,1) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+--
+-- Volcado de datos para la tabla `articulo`
+--
+INSERT INTO `articulo` (`id`, `cantidad`, `descripcion`, `precio`) VALUES
+(1, 5, 'Lapices', '1.5'),
+(2, 10, 'Cuadernos', '15.3'),
+(3, 1, 'Caja de clips', '10.0'),
+(4, 3, 'Caja de colores', '40.0');
+
+--
+-- Indices de la tabla `articulo`
+--
+ALTER TABLE `articulo`
+  ADD PRIMARY KEY (`id`);
+COMMIT;
+_________________________________________
+
+Pagina PHP del controlador "index.php"
+_________________________________________
+<?php
+
+   // Incluir la logica del modelo
+   include('modelo.php');
+
+   // Obtener la lista de articulos
+   $articulos = getTodosLosArticulos();
+
+   // Incluir la logica de la vista
+   include('vista.php');
+
+?>
+_________________________________________
+
+Pagina PHP del modelo "modelo.php"
+_________________________________________
+<?php
+function getTodosLosArticulos()
+{
+
+   // Conectar con la base de datos y ejecutar consulta
+   $conexion = mysqli_connect('db', 'root', 'passw', 'test');
+   $conexion->set_charset("utf8");
+
+   $res = $conexion->query("SELECT cantidad, descripcion, precio FROM articulo");
+
+   // Crear el array de elementos para la capa de la vista
+
+   $articulos = array();
+   while($f = $res->fetch_assoc()){
+        $articulos[] = $f;
+   }
+
+   $conexion->close();
+
+   return $articulos;
+}
+?>
+_________________________________________
+
+Pagina PHP de la vista "vista.php"
+_________________________________________
+<html>
+   <head>
+      <title>Listado de Articulos</title>
+   </head>
+   <body>
+      <h1>Listado de Articulos</h1>
+      <table border="1">
+         <tr><th>Cantidad</th><th>Descripcion</th><th>Precio</th></tr>
+         <?php foreach ($articulos as $articulo): ?>
+         <tr>
+            <td><?php echo $articulo['cantidad'] ?></td>
+            <td><?php echo $articulo['descripcion'] ?></td>
+            <td><?php echo $articulo['precio'] ?></td>
+         </tr>
+         <?php endforeach; ?>
+      </table>
+   </body>
+</html>
+_________________________________________
+
+
+
+# _____________
+
+# Contenedor.py
+
+# _____________
+
+class Infraestructura:
+
+
+    def __init__(self, client, contenedores):
+        self.client = client
+        self.contenedores = contenedores
+
+
+    def _print(self):
+        print " "
+        print "{:15} {:20} {:10} {:25}".format("Id","Nombre","Estado","Imagen")
+        for c in self.contenedores:
+            print "{:15}{:20}{:10}{:25}".format(\
+                str(c['Id'])[:10], c['name'], c['state'], c['image'])
+        print " "
+
+
+    def _add_info(self):
+        for mc in self.contenedores:
+            existe = False
+            nombre = mc['name']
+            for c in self.client.containers.list(all=True):
+                if nombre == c.attrs['Name'].split('/')[1]:
+                    existe = True
+                    mc.update({'state': c.attrs['State']['Status']})
+                    mc.update({'Id': c.attrs['Id']})
+                    break
+            if existe == False:
+                mc.update({'state': None})
+                mc.update({'Id': 0})
+
+
+    def _remove(self):
+        for mc in self.contenedores:
+            id = mc['Id']
+            for c in self.client.containers.list(all=True):
+                if id == c.attrs['Id']:
+                    if not c.attrs['State']['Status'] == 'running':
+                        self.client.containers.model.remove(c)
+                        print "Contenedor", id, "removido"
+                    else:
+                        print "El contenedor ", mc['name'], " esta en ejecucion. "
+                    break
+
+
+    def _create(self):
+        for x in self.contenedores:
+            if x['state'] == None:
+                self.client.containers.create( image=x['image'], \
+                                               name=x['name'],   \
+                                               ports=x['ports'], \
+                                               links=x['links'], \
+                                               environment=x['environment'])
+            else:
+                print " El contenedor ", x['name'], " ya existe. "
+
+
+    def _stop(self):
+        for mc in self.contenedores:
+            id = mc['Id']
+            for c in self.client.containers.list(all=True):
+                if id == c.attrs['Id']:
+                    if c.attrs['State']['Status'] == 'running':
+                        self.client.containers.model.stop(c)
+                    else:
+                        print " El contenedor ", mc['name'], " no esta en ejecucion. "
+                    break
+
+
+    def _start(self):
+        for mc in self.contenedores:
+            id = mc['Id']
+            for c in self.client.containers.list(all=True):
+                if id == c.attrs['Id']:
+                    if not c.attrs['State']['Status'] == 'running':
+                        self.client.containers.model.start(c)
+                    else:
+                        print "El contenedor ", mc['name'], " esta en ejecucion. "
+                    break
+
+
+    def _exec(self, contenedor, command, pathdir):
+        for mc in self.contenedores:
+            nombre = mc['name']
+            id = mc['Id']
+            if nombre == contenedor:
+                for c in self.client.containers.list(all=True):
+                    if id == c.attrs['Id']:
+                        if c.attrs['State']['Status'] == 'running':
+                            print self.client.containers.model.\
+                                exec_run(c, cmd=command, tty=True, workdir=pathdir)
+                        else:
+                            print " El contenedor ", contenedor, " no esta en ejecucion. "
+                        break
+
+
+    def _put_file(self, contenedor, dir, datos):
+        for mc in self.contenedores:
+            nombre = mc['name']
+            id = mc['Id']
+            if nombre == contenedor:
+                for c in self.client.containers.list(all=True):
+                    if id == c.attrs['Id']:
+                        if c.attrs['State']['Status'] == 'running':
+                            self.client.containers.model.\
+                                put_archive(c, path=dir, data=datos)
+                        else:
+                            print " El contenedor ", contenedor, " no esta en ejecucion. "
+                        break
+
+
+class Imagenes:
+    def __init__(self, client):
+        self.client = client
+
+
+    def _exists(self, imagen):
+        for c in self.client.images.list():
+            if c.attrs['RepoTags']:
+                if imagen == c.attrs['RepoTags'][0]:
+                    return c.attrs['Size']/1000000
+
+
+    def _list(self, contenedores):
+        print ""
+        for mc in contenedores:
+            tam = self._exists(mc['image'])
+            if tam:
+                print "Existe imagen {} con {} MB".format(mc['image'], tam)
+            else:
+                print "No existe imagen {} ".format(mc['image'])
+
+
+    def _create(self, f, tagname):
+        response = [line for line in \
+                    self.client.images.build(fileobj=f, \
+                    rm=True, tag=tagname)]
+        return response
+
+
